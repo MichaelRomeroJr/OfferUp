@@ -1,0 +1,180 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Wed Jan  2 18:50:23 2019
+@author: MichaelRomeroJr
+"""
+from selenium import webdriver
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.chrome.options import Options
+from time import sleep
+import selenium
+import os, sys, inspect
+
+def init_driver():
+    options = Options()
+    options.add_argument("user-data-dir=C:/Users/Micha/AppData/Local/Google/Chrome/User Data") #Path to your chrome profile
+    options.add_argument("--window-size=1300,800");
+    options.add_argument("--window-position=0,0");
+    current_folder = os.path.realpath(os.path.abspath(os.path.split(inspect.getfile(inspect.currentframe() ))[0]))
+    chromedriver = os.path.join(current_folder,"chromedriver.exe") # via this way, you explicitly let Chrome know where to find 
+    driver = webdriver.Chrome(executable_path = chromedriver,options = options) # the webdriver
+    return driver
+
+def OfferUp_Login(driver):    
+    driver.get("https://offerup.com/search/?q=Brand+New&radius=50&price_min=100&delivery_param=p")
+    return 
+
+def OfferUp_GetPostLinks(driver):
+    Listings =[]
+    
+    html = driver.find_element_by_tag_name('html')
+    html.send_keys(Keys.END)
+    sleep(5)
+    html.send_keys(Keys.END)
+    sleep(5)
+    
+    columnWebElements = driver.find_elements_by_xpath("//*[@id='db-item-list']/div")
+    for elem in columnWebElements:
+        columnElements = elem.find_elements_by_xpath("//a")
+        for href in columnElements:
+            data_href = href.get_attribute('href')
+            try: 
+                if "detail" in data_href:
+                    Listings.append(data_href)
+            except:
+                pass
+    return Listings
+     
+def OfferUp_Offer(driver, Listings, Users):
+    print("Listing Count: ", len(Listings))
+    ErrorCount, OfferCount = 0, 0
+    for listing in Listings: #On Page for Listing
+        try:       
+            print('')
+            driver.get(listing) #Visit Page
+            sleep(3)
+        
+            try: #Check If Listing Has Been Deleted
+                buttons = driver.find_elements_by_xpath("//*[contains(text(), 'This item has been removed')]") #Click button by text
+                print('This item has been deleted')
+                print(buttons)
+                print(buttons[0].text)
+            except:
+                pass
+            #Check if we've sent offer to user before
+            SpamDetected = OfferUp_SpamPrevention(driver, listing, Users) 
+            print("Is it spam: ", SpamDetected)
+            #driver.find_element_by_xpath("//*[@id='react-container']/div/div[5]/div[1]/div[2]/div/div/div[1]/button[1]").click() #Click "Offer" 
+            driver.find_element_by_xpath("//*[@id='react-container']/div/div[4]/div[1]/div[2]/div/div/div[1]/button[1]").click()
+            try: #Check if "Seller only accepts offers at full price" exists          
+                text = driver.find_element_by_xpath("/html/body/div[2]/div[2]/div/div[3]/div[1]/span").text
+                if text == 'Seller only accepts offers at full price':
+                    CanHaggle = False
+                    print("Seller only accepts offers at full price")
+            except: #You can submit offer
+                CanHaggle = True
+            try: #Check if the Listing has Sold
+                text = driver.find_element_by_xpath("//*[@id='react-container']/div/div[5]/div[1]/div[1]/div[1]/div/div/div/span/span/span[2]").text
+                if text == 'SOLD':
+                    CanHaggle = False
+            except:
+                pass
+            try: #Check if the listing has been removed      
+                print('Try to check if listing has been removed')
+                text = driver.find_element_by_xpath("//*[@id='react-container']/div/div[2]/div/div/div/h2").text
+            
+                print(text)
+                if text == "This item has been removed":
+                    print("text == This item has been removed")
+                    CanHaggle = False
+            except:
+                pass
+        
+            if CanHaggle:    
+                #ListedPrice = driver.find_element_by_xpath("//*[@id='react-container']/div/div[5]/div[1]/div[1]/div[1]/div/div/div/span/span/span").text
+                #ListedPrice = driver.find_element_by_xpath("/html/body/div[2]/div[2]/div/div[3]/div[1]/div[1]/div/input").text
+                ListedPrice = driver.find_element_by_class_name('_3uu46w').text
+                print(ListedPrice)
+                ListedPrice = ListedPrice.replace("$","")
+                ListedPrice = ListedPrice.replace(",","")
+                ListedPrice = int(float(ListedPrice)) #Current Listed Price
+                Offer = int((ListedPrice/2)) #Offer Half Listed Price
+                print("Listed Price: ", ListedPrice, "Offer: ", Offer)
+                driver.find_element_by_xpath("/html/body/div[2]/div[2]/div/div[3]/div[1]/div[1]/div/input").clear()
+                driver.find_element_by_xpath("/html/body/div[2]/div[2]/div/div[3]/div[1]/div[1]/div/input").send_keys(Offer)
+                sleep(2)
+                try: #Click "Make Offer" button so check for spam
+                    print("Can Make Offer")
+    
+                    if SpamDetected == False:
+                        try: #If you have to chose between "Pick Up" vs "Ship To Me"
+                            driver.find_element_by_xpath("/html/body/div[2]/div[2]/div/div[3]/div[2]/div[1]/div/div[1]/button/div").click()
+                            OfferCount+=1
+                            #print("Two buttons: Pick Up vs Ship To Me")
+                        except: 
+                            pass
+                        try: #Only One "Offer" Button is present
+                            driver.find_element_by_xpath("/html/body/div[2]/div[2]/div/div[3]/div[2]/button").click()
+                            OfferCount+=1
+                            #print("One Button: 'Make Offer'")
+                        except:
+                            pass
+                except: #There is no "Offer" button what so ever
+                    ErrorCount+=1
+                    print('Error')
+         
+            print('Current Error Count: ', ErrorCount)
+            print('Current Offers Sent: ', OfferCount)        
+            sleep(15)
+            print('Error Count: ', ErrorCount)
+            print('Offers Sent: ', OfferCount)    
+    
+        except:
+            print("Error on listing")
+    return            
+           
+def OfferUp_SpamPrevention(driver, link, Users):
+    print("Spam Prevention: ")
+    IsSpam = False
+    UserId = OfferUp_GetUserId(driver)
+    
+    if UserId in Users:
+        OldValue = Users[UserId]
+        OldValue.append(link)
+        OfferUp_UpdateSpamList(driver, OldValue, Users, UserId)
+    else:
+        Value = [link]
+        OfferUp_UpdateSpamList(driver, Value, Users, UserId)
+        
+    try:
+        if len(Users[UserId]) >= 2:
+            IsSpam = True
+    except:
+        pass
+    
+    return IsSpam 
+
+def OfferUp_GetUserId(driver):
+    sleep(2)
+    UserElement = driver.find_element_by_xpath("//*[@id='react-container']/div/div[4]/div[1]/div[2]/div/a")
+    UserId = UserElement.get_attribute('href')
+    print("User ID: ", UserId)
+    return UserId    
+
+def OfferUp_UpdateSpamList(driver, Value, Users, UserId):
+    AddKey = Value
+    Users[UserId] = AddKey
+    return
+
+def OfferUp_Run():
+    Users = {}
+    driver = init_driver()
+    OfferUp_Login(driver)
+    Listings = OfferUp_GetPostLinks(driver)
+    OfferUp_Offer(driver, Listings, Users)
+    
+    print(Users)
+    
+    return
+
+OfferUp_Run()
